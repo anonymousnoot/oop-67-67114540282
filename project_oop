@@ -1,0 +1,151 @@
+import streamlit as st
+from ollama import chat
+from langdetect import detect
+import time
+import json
+
+# บันทึกประวัติแชทลงไฟล์ JSON
+def save_chat_history():
+    with open("chat_history.json", "w", encoding="utf-8") as f:
+        json.dump(st.session_state.messages, f, ensure_ascii=False, indent=4)
+
+# โหลดประวัติแชทเมื่อเริ่มต้น
+def load_chat_history():
+    try:
+        with open("chat_history.json", "r", encoding="utf-8") as f:
+            st.session_state.messages = json.load(f)
+    except FileNotFoundError:
+        st.session_state.messages = []
+
+# โหลดประวัติแชทเมื่อล็อกอินสำเร็จ
+load_chat_history()
+
+st.set_page_config(page_title="AI Chatbot", page_icon="🧠", layout="wide")
+# ---------------- SESSION STATE ---------------- #
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "users" not in st.session_state:
+    st.session_state.users = {"asia": "12345"}  # บัญชีเริ่มต้น
+if "username" not in st.session_state:
+    st.session_state.username = None  # บันทึกชื่อผู้ใช้ที่ล็อกอิน
+
+# ---------------- SIDEBAR ---------------- #
+if st.session_state.authenticated:
+    with st.sidebar:
+        st.title("Settings")
+        model_name = st.selectbox("เลือกโมเดลที่ต้องการใช้", ["llama3", "mistral"], index=0)
+
+        if st.button("ล้างแชท"):
+            st.session_state.messages = []  # ล้างแชทใน session
+            with open("chat_history.json", "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=4)  # ล้างไฟล์แชท
+            st.rerun()
+
+        if st.button("ออกจากระบบ"):
+            st.session_state.authenticated = False
+            st.session_state.username = None  # 🔹 ล้าง Username ออกจาก Session State
+            st.rerun()
+
+# ---------------- MAIN CONTENT ---------------- #
+if not st.session_state.authenticated:
+    col1, col2, col3 = st.columns([1, 2, 1])  # 1:1:1 ให้คอลัมน์ตรงกลาง
+    with col2:
+        st.markdown("""
+            <div style='text-align: center; font-size: 25px; font-weight: bold; color: #3a3a3a;'>
+                 กรุณาล็อกอินหรือสมัครสมาชิกเพื่อใช้งาน Chatbot
+            </div>
+            <div style='text-align: center; font-size: 18px; color: #7a7a7a;'>
+                เข้าสู่ระบบหรือสร้างบัญชีใหม่เพื่อเริ่มใช้งาน
+            </div>
+        """, unsafe_allow_html=True)
+
+        tab1, tab2 = st.tabs([" Login", " Register"])
+
+        with tab1:
+            with st.form(key='login_form'):
+                username = st.text_input('Username')
+                password = st.text_input('Password', type='password')
+                login_button = st.form_submit_button(" Login")
+
+            if login_button:
+                if username in st.session_state.users and st.session_state.users[username] == password:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username  # 🔹 บันทึก Username ที่ล็อกอินไว้
+                    st.success(f"✅ Login สำเร็จ! ยินดีต้อนรับ {username}")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ Username หรือ Password ไม่ถูกต้อง")
+
+
+        with tab2:
+            with st.form(key='register_form'):
+                new_username = st.text_input('สร้าง Username')
+                new_password = st.text_input('สร้าง Password', type='password')
+                confirm_password = st.text_input('ยืนยัน Password', type='password')
+                register_button = st.form_submit_button(" Register")
+
+            if register_button:
+                if new_username in st.session_state.users:
+                    st.error("❌ Username นี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น")
+                elif new_password != confirm_password:
+                    st.error("❌ Password ไม่ตรงกัน กรุณาลองอีกครั้ง")
+                elif len(new_username) < 3 or len(new_password) < 5:
+                    st.error("❌ Username ต้องมีอย่างน้อย 3 ตัว และ Password อย่างน้อย 5 ตัว")
+                else:
+                    st.session_state.users[new_username] = new_password
+                    st.success("✅ สมัครสมาชิกสำเร็จ! กรุณา Login")
+                    time.sleep(1)
+                    st.rerun()
+
+else:
+    # เมื่อผู้ใช้ล็อกอินแล้ว
+    st.title("AI Chatbot")
+    st.subheader(f"ยินดีต้อนรับ {st.session_state.username}!")
+
+    # แสดงข้อความใน session_state
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    # ช่องพิมพ์ข้อความ
+    user_message = st.chat_input("พิมพ์ข้อความที่นี่...")
+    if user_message:
+        st.session_state.messages.append({'role': 'user', 'content': user_message})
+
+        with st.chat_message("user"):
+            st.write(user_message)
+
+        # แสดง loading indicator
+        with st.spinner("กำลังคิด..."):
+            time.sleep(1)
+
+        # ตรวจจับภาษา
+        try:
+            user_lang = detect(user_message)
+        except:
+            user_lang = "en"
+
+        if user_lang == "th":
+            system_prompt = "คุณเป็นแชทบอทอัจฉริยะที่สามารถช่วยเหลือผู้ใช้ได้ในหลายหัวข้อ คุณคือ AI mistral และ llama3 รวมถึงความรู้ทั่วไป เทคโนโลยี วิทยาศาสตร์ และการสนทนาทั่วไป กรุณาตอบกลับเป็นภาษาไทย 100% หากผู้ใช้ถามเป็นภาษาไทย และหากเป็นภาษาอื่นให้ตอบในภาษานั้น"
+        else:
+            system_prompt = f"You are a chatbot. Respond in {user_lang}."
+
+        messages = [{"role": "system", "content": system_prompt}] + st.session_state.messages
+        messages.append({"role": "user", "content": user_message})
+
+        # ตอบกลับจาก AI
+        with st.chat_message("assistant"):
+            response_container = st.empty()
+            full_response = ""
+
+            for chunk in chat(model=model_name, messages=messages, stream=True):
+                full_response += chunk["message"]["content"]
+                response_container.markdown(full_response + "▌")
+
+            response_container.markdown(full_response)
+
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        save_chat_history()
